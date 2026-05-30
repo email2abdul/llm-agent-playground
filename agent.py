@@ -3,6 +3,8 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv
 
+from rag import search_docs as _rag_search
+
 load_dotenv()
 
 # ============================================================
@@ -54,9 +56,16 @@ def calculate(expression: str) -> str:
         return f"Calculation error: {e}"
 
 
+def search_docs(query: str) -> str:
+    """docs/ folder ke indexed documents me query ke relevant chunks dhundta hai (RAG)."""
+    print(f"  🔧 [Tool called: search_docs({query!r})]")
+    return _rag_search(query)
+
+
 TOOL_FUNCTIONS = {
     "get_current_time": get_current_time,
     "calculate": calculate,
+    "search_docs": search_docs,
 }
 
 
@@ -91,6 +100,23 @@ TOOLS_SCHEMA_GROQ = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_docs",
+            "description": "User ke indexed documents (notes, tutorials, etc.) me semantic search karta hai. Use karo jab user puchhe 'docs me kya likha hai about X', 'notes ke according', 'apne documents se batao', ya koi specific concept jo user ke private docs me ho sakta hai.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query. User ka sawal as-is ya thoda rephrased. Example: 'what is RAG', 'python list methods'",
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 # Anthropic format — flat, "input_schema" instead of "parameters"
@@ -112,6 +138,20 @@ TOOLS_SCHEMA_ANTHROPIC = [
                 }
             },
             "required": ["expression"],
+        },
+    },
+    {
+        "name": "search_docs",
+        "description": "User ke indexed documents (notes, tutorials, etc.) me semantic search karta hai. Use karo jab user puchhe 'docs me kya likha hai about X', 'notes ke according', 'apne documents se batao', ya koi specific concept jo user ke private docs me ho sakta hai.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query. User ka sawal as-is ya thoda rephrased. Example: 'what is RAG', 'python list methods'",
+                }
+            },
+            "required": ["query"],
         },
     },
 ]
@@ -143,7 +183,7 @@ GENERAL RULES:
    Never call a tool and then ignore its output.
 
 TOOL USAGE — BE VERY CAREFUL:
-You have ONLY two tools: get_current_time, calculate. Use them ONLY for these exact cases.
+You have THREE tools: get_current_time, calculate, search_docs. Use them ONLY for these exact cases.
 
 CALL get_current_time when user asks about ACTUAL current time/date, like:
   - "what time is it?", "abhi time kya hai?"
@@ -154,18 +194,26 @@ CALL calculate when user asks for ACTUAL math, like:
   - "what is 15% of 1200?"
   - "calculate (100+50)/3"
 
+CALL search_docs when user refers to their OWN documents/notes, like:
+  - "docs me kya likha hai about X?"
+  - "mere notes ke according RAG kya hai?"
+  - "apne documents se batao Python list ke baare me"
+  - "from my docs, what is an agent?"
+Do NOT call search_docs for general knowledge questions you already know — only when user explicitly references their docs/notes.
+
 CRITICAL — MULTI-PART QUESTIONS:
 If user asks MULTIPLE things requiring DIFFERENT tools in one message, you MUST call ALL relevant tools.
 NEVER drop any tool call. Examples:
   - "what time is it and 2^10?" → MUST call BOTH get_current_time AND calculate("2^10")
   - "current time aur 50+50 batao" → MUST call BOTH get_current_time AND calculate("50+50")
-  - "kya time hai aur 100*2 kya hai" → BOTH tools, not just one.
+  - "docs me Python kya bola hai aur 5*5 kitna?" → BOTH search_docs AND calculate.
 Plan your tool calls FIRST: list every tool needed, then call them all before answering.
 
-DO NOT call any tool for conceptual questions:
+DO NOT call any tool for general conceptual questions answerable from your own knowledge:
   - "function kya hota hai?" / "what is a function?" → no tool, just explain
-  - "list kya hai?" / "loop explain karo" → no tool, just explain
-  - Any definitional/explanatory question → no tool.
+  - "loop explain karo" → no tool, just explain
+  - General definitional/explanatory question → no tool.
+  - EXCEPTION: if user explicitly says "from my docs" or "mere notes ke according" → use search_docs.
 
 If unsure whether to call a tool, DON'T call it — just answer in text.
 

@@ -10,7 +10,8 @@ Sikhna ke liye banaya gaya — pure Python, no frameworks (LangChain etc. nahi).
 
 - **Agent loop** — LLM tool call kare → tool run ho → result wapas LLM ko jaaye → final answer
 - **Memory** — poori conversation history yaad rakhta hai
-- **Tools** — `get_current_time` aur `calculate` (math evaluator, `^` power bhi)
+- **Tools** — `get_current_time`, `calculate` (math, `^` power bhi), `search_docs` (RAG)
+- **RAG** — apne `docs/` folder ke files me semantic search (Gemini embeddings + in-memory cosine similarity)
 - **Multi-provider** — `PROVIDER = "groq"` ya `"anthropic"` line badlo, baki kuch change nahi
 - **Safety** — max iterations limit, Groq tool-call retry logic
 - **System prompt** — agent ki personality (Guru), language rules, tool-use rules
@@ -27,7 +28,7 @@ Sikhna ke liye banaya gaya — pure Python, no frameworks (LangChain etc. nahi).
 
 2. Dependencies install:
    ```bash
-   python3 -m pip install python-dotenv groq anthropic google-genai
+   python3 -m pip install python-dotenv groq anthropic google-genai numpy
    ```
 
 3. Project root me `.env` file banao:
@@ -81,12 +82,51 @@ Quality chahiye to `agent.py` me `MODEL = "claude-sonnet-4-6"` kar do.
 
 ---
 
+## RAG — apne documents pe agent chala
+
+Agent ke paas ab `search_docs` tool hai jo `docs/` folder ke files me semantic search karta hai.
+
+**Use kaise karein:**
+
+1. Apne notes/text files (`.md` ya `.txt`) `docs/` folder me daalo
+2. Index banao (har baar docs change ho to chalao):
+   ```bash
+   python3 rag.py index
+   ```
+3. Agent chalao aur apne docs ke baare me puchho:
+   ```
+   Aap: mere notes ke according RAG kya hai?
+     [Tool called: search_docs('RAG kya hai')]
+   Guru: Mere docs ke according, RAG = Retrieval Augmented Generation hai...
+   ```
+
+**CLI search test** (agent ke bina):
+```bash
+python3 rag.py search "python list methods"
+```
+
+**Andar kya ho raha hai:**
+1. Docs ko 500-char chunks me toda (100-char overlap)
+2. Gemini `gemini-embedding-001` se har chunk ko 3072-dim vector banaya
+3. `rag_index.pkl` me save (gitignored, regenerable)
+4. Query time pe: query embed → cosine similarity → top-3 chunks return
+5. Agent un chunks ko context ki tarah use karke answer banata hai
+
+Sample docs (`python_basics.md`, `ai_agents.md`) already included hain — `python3 rag.py index` chalake test kar lo.
+
+---
+
 ## File structure
 
 ```
 .
 ├── agent.py          # Main agent (LLM + tools + memory + loop)
+├── rag.py            # RAG: chunking, embeddings, search
 ├── list_models.py    # Gemini ke available models list karne ka small utility
+├── docs/             # Tumhare .md / .txt files (RAG corpus)
+│   ├── python_basics.md
+│   └── ai_agents.md
+├── rag_index.pkl     # RAG index (gitignored, auto-generated)
 ├── .env              # API keys (gitignored — kabhi commit mat karna)
 ├── .gitignore
 └── README.md
@@ -119,8 +159,9 @@ Quality chahiye to `agent.py` me `MODEL = "claude-sonnet-4-6"` kar do.
 
 ## Roadmap (aage kya seekhna hai)
 
-- [ ] **RAG** — vector DB + embeddings + semantic search se documents query karna
+- [x] **RAG** — vector DB + embeddings + semantic search se documents query karna ✅
 - [ ] **MCP** — tools ko external MCP server me convert karna (Anthropic ka standard)
+- [ ] **ChromaDB upgrade** — in-memory ki jagah proper persistent vector DB
 - [ ] Streaming responses (token-by-token output)
 - [ ] More tools (web search, file ops, code execution)
 - [ ] Conversation persistence (file/DB me save karo)
@@ -129,10 +170,12 @@ Quality chahiye to `agent.py` me `MODEL = "claude-sonnet-4-6"` kar do.
 
 ## Concepts jo cover hue
 
-- LLM API calls (Groq, Anthropic)
+- LLM API calls (Groq, Anthropic, Gemini embeddings)
 - Function/tool calling
 - Agent loop (multi-turn tool use)
 - Conversation memory
 - System prompts
 - Multi-provider abstraction
 - API key management (`.env` + `python-dotenv`)
+- **RAG** — chunking, embeddings, cosine similarity, retrieval
+- Tool-based RAG integration (LLM khud decide karta hai kab docs search karna hai)

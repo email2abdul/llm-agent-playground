@@ -24,3 +24,6 @@ env/
 
 # Claude Code local settings
 .claude/
+
+# RAG index (regenerate via: python3 rag.py index)
+rag_index.pkl
