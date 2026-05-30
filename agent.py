@@ -8,29 +8,39 @@ from rag import search_docs as _rag_search
 load_dotenv()
 
 # ============================================================
-# PROVIDER CHOICE — yahan badlo aur agent dusra LLM use karega
+# PROVIDER CHOICE
 #   "groq"      → Llama-4 Scout (free, fast)
 #   "anthropic" → Claude (Anthropic)
 # ============================================================
-PROVIDER = "anthropic"
+PROVIDER = "anthropic"  # default — UI ya CLI se baad me set_provider() se badal sakte ho
+MODEL = None
+client = None
 
-# Provider ke hisaab se client aur model setup
-if PROVIDER == "groq":
-    from groq import Groq
 
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+def set_provider(name: str):
+    """Provider switch karo runtime pe. Client + MODEL re-initialize hote hain."""
+    global PROVIDER, MODEL, client
 
-elif PROVIDER == "anthropic":
-    from anthropic import Anthropic
+    if name == "groq":
+        from groq import Groq
 
-    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    # Haiku 4.5 = sasta + fast, learning ke liye perfect
-    # Quality chahiye to "claude-sonnet-4-6" use karo
-    MODEL = "claude-haiku-4-5-20251001"
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-else:
-    raise ValueError(f"Unknown PROVIDER '{PROVIDER}'. Use 'groq' ya 'anthropic'.")
+    elif name == "anthropic":
+        from anthropic import Anthropic
+
+        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        # Haiku 4.5 = sasta + fast. Quality chahiye to "claude-sonnet-4-6"
+        MODEL = "claude-haiku-4-5-20251001"
+
+    else:
+        raise ValueError(f"Unknown provider '{name}'. Use 'groq' ya 'anthropic'.")
+
+    PROVIDER = name
+
+
+set_provider(PROVIDER)
 
 
 # ============================================================
@@ -349,38 +359,50 @@ def _run_anthropic(user_input: str, max_iterations: int) -> str:
 
 
 # ============================================================
-# MAIN LOOP
+# RESET HELPER — app.py ya CLI dono use kar sakte hain
 # ============================================================
 
-print(f"Guru chalu (provider: {PROVIDER} | model: {MODEL}) 🧠⚡")
-print("'exit' likho band karne ke liye, 'reset' memory clear karne ke liye.\n")
+def reset_messages():
+    """Conversation memory clear karo (fresh start)."""
+    global messages
+    messages = fresh_messages()
 
-while True:
-    user_input = input("Aap: ")
 
-    if user_input.lower() == "exit":
-        print("Bye bhai!")
-        break
+# ============================================================
+# CLI MAIN LOOP — sirf jab `python3 agent.py` directly chalao
+# Import karne pe ye nahi chalega (app.py jaise consumers ke liye)
+# ============================================================
 
-    if user_input.lower() == "reset":
-        messages = fresh_messages()
-        print("Guru: Memory reset!\n")
-        continue
+if __name__ == "__main__":
+    print(f"Guru chalu (provider: {PROVIDER} | model: {MODEL}) 🧠⚡")
+    print("'exit' likho band karne ke liye, 'reset' memory clear karne ke liye.\n")
 
-    try:
-        reply = run_agent_turn(user_input)
-        print(f"Guru: {reply}\n")
-    except Exception as e:
-        err_str = str(e)
-        # Groq-specific: model ne galti se tool call kar diya
-        if "tool_use_failed" in err_str or "Failed to call a function" in err_str:
-            print("  ⚠️  Model ne tool call mein galti ki — clean retry karta hoon...")
-            if messages and messages[-1].get("role") == "user":
-                messages.pop()
-            try:
-                reply = run_agent_turn(user_input)
-                print(f"Guru: {reply}\n")
-            except Exception as e2:
-                print(f"Guru: Retry bhi fail — {type(e2).__name__}\n")
-        else:
-            print(f"Guru: Error aaya — {type(e).__name__}: {e}\n")
+    while True:
+        user_input = input("Aap: ")
+
+        if user_input.lower() == "exit":
+            print("Bye bhai!")
+            break
+
+        if user_input.lower() == "reset":
+            reset_messages()
+            print("Guru: Memory reset!\n")
+            continue
+
+        try:
+            reply = run_agent_turn(user_input)
+            print(f"Guru: {reply}\n")
+        except Exception as e:
+            err_str = str(e)
+            # Groq-specific: model ne galti se tool call kar diya
+            if "tool_use_failed" in err_str or "Failed to call a function" in err_str:
+                print("  ⚠️  Model ne tool call mein galti ki — clean retry karta hoon...")
+                if messages and messages[-1].get("role") == "user":
+                    messages.pop()
+                try:
+                    reply = run_agent_turn(user_input)
+                    print(f"Guru: {reply}\n")
+                except Exception as e2:
+                    print(f"Guru: Retry bhi fail — {type(e2).__name__}\n")
+            else:
+                print(f"Guru: Error aaya — {type(e).__name__}: {e}\n")

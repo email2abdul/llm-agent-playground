@@ -12,7 +12,9 @@ Sikhna ke liye banaya gaya — pure Python, no frameworks (LangChain etc. nahi).
 - **Memory** — poori conversation history yaad rakhta hai
 - **Tools** — `get_current_time`, `calculate` (math, `^` power bhi), `search_docs` (RAG)
 - **RAG** — apne `docs/` folder ke files me semantic search (Gemini embeddings + in-memory cosine similarity)
-- **Multi-provider** — `PROVIDER = "groq"` ya `"anthropic"` line badlo, baki kuch change nahi
+- **Multi-provider** — Anthropic Claude ya Groq Llama-4, UI ya code se runtime pe switch
+- **Web UI** — Streamlit chat interface with sidebar (provider switch, reset, tool call visibility)
+- **CLI** — terminal me bhi chala sakte ho
 - **Safety** — max iterations limit, Groq tool-call retry logic
 - **System prompt** — agent ki personality (Guru), language rules, tool-use rules
 
@@ -28,7 +30,7 @@ Sikhna ke liye banaya gaya — pure Python, no frameworks (LangChain etc. nahi).
 
 2. Dependencies install:
    ```bash
-   python3 -m pip install python-dotenv groq anthropic google-genai numpy
+   python3 -m pip install python-dotenv groq anthropic google-genai numpy streamlit
    ```
 
 3. Project root me `.env` file banao:
@@ -47,6 +49,19 @@ Sikhna ke liye banaya gaya — pure Python, no frameworks (LangChain etc. nahi).
 
 ## Chalao
 
+### Option 1: Web UI (recommended)
+
+```bash
+python3 -m streamlit run app.py
+```
+
+Browser khulega `http://localhost:8501` pe. Features:
+- Chat interface (ChatGPT jaisa look)
+- Left sidebar: Provider switch (Anthropic/Groq), Reset button
+- Har response ke neeche **"Tool calls"** expander — kaunse tools call hue dekh sakte ho
+
+### Option 2: Terminal (CLI)
+
 ```bash
 python3 agent.py
 ```
@@ -59,7 +74,7 @@ Aap: 25*4 kitna hai aur abhi time kya hai?
 Guru: 25 * 4 = 100. Abhi time hai 1:37 PM, Saturday, May 30, 2026.
 ```
 
-Commands:
+CLI commands:
 - `exit` — agent band karne ke liye
 - `reset` — conversation memory clear karne ke liye
 
@@ -67,7 +82,9 @@ Commands:
 
 ## Provider switch
 
-`agent.py` ke top me PROVIDER badlo:
+**UI me:** Sidebar ke "Provider" dropdown se select karo — conversation auto-reset ho jaayegi.
+
+**Code me:** `agent.py` ke top me default badlo:
 
 ```python
 PROVIDER = "anthropic"  # ya "groq"
@@ -121,6 +138,7 @@ Sample docs (`python_basics.md`, `ai_agents.md`) already included hain — `pyth
 ```
 .
 ├── agent.py          # Main agent (LLM + tools + memory + loop)
+├── app.py            # Streamlit web UI
 ├── rag.py            # RAG: chunking, embeddings, search
 ├── list_models.py    # Gemini ke available models list karne ka small utility
 ├── docs/             # Tumhare .md / .txt files (RAG corpus)
@@ -160,6 +178,7 @@ Sample docs (`python_basics.md`, `ai_agents.md`) already included hain — `pyth
 ## Roadmap (aage kya seekhna hai)
 
 - [x] **RAG** — vector DB + embeddings + semantic search se documents query karna ✅
+- [x] **Web UI** — Streamlit chat interface ✅
 - [ ] **MCP** — tools ko external MCP server me convert karna (Anthropic ka standard)
 - [ ] **ChromaDB upgrade** — in-memory ki jagah proper persistent vector DB
 - [ ] Streaming responses (token-by-token output)
