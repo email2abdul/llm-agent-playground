@@ -7,8 +7,12 @@ import agent
 
 st.set_page_config(page_title="Guru — LLM Agent")
 
+# processing flag — streaming ke time True, baki False
+# Iss flag se chat_input + sidebar controls disabled rehte hain
+processing = st.session_state.get("processing", False)
+
 # ============================================================
-# SIDEBAR — provider switch + reset
+# SIDEBAR — provider switch + reset (processing ke time disabled)
 # ============================================================
 with st.sidebar:
     st.header("Settings")
@@ -18,10 +22,9 @@ with st.sidebar:
         "Provider",
         provider_options,
         index=provider_options.index(agent.PROVIDER),
+        disabled=processing,
     )
 
-    # Provider change ho gaya — re-init aur conversation clear karo
-    # (Groq aur Anthropic ke message formats alag hain, mix nahi kar sakte)
     if selected != agent.PROVIDER:
         agent.set_provider(selected)
         agent.reset_messages()
@@ -32,7 +35,7 @@ with st.sidebar:
 
     st.divider()
 
-    if st.button("Reset conversation", use_container_width=True):
+    if st.button("Reset conversation", use_container_width=True, disabled=processing):
         agent.reset_messages()
         st.session_state.messages = []
         st.rerun()
@@ -51,7 +54,7 @@ st.caption(f"Running on **{agent.PROVIDER}** ({agent.MODEL})")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Render history (with tool logs if any)
+# Render history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         if msg.get("tools"):
@@ -60,29 +63,56 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 
-user_input = st.chat_input("Apna sawal yahan likho...")
+# ============================================================
+# INPUT — processing ke time disabled
+# ============================================================
+user_input = st.chat_input(
+    "Guru soch raha hai..." if processing else "Apna sawal yahan likho...",
+    disabled=processing,
+)
 
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
+# Double-rerun pattern:
+# Run 1: user input lo, processing flag set karo, rerun (taki input disabled dikhe)
+# Run 2: pending input process karo, response stream karo, flag clear, rerun (input wapas enabled)
+if user_input and not processing:
+    st.session_state.processing = True
+    st.session_state.pending_input = user_input
+    st.rerun()
+
+if processing and "pending_input" in st.session_state:
+    pending = st.session_state.pending_input
+
+    st.session_state.messages.append({"role": "user", "content": pending})
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(pending)
 
     with st.chat_message("assistant"):
-        # Tools print karte hain stdout pe — usse capture karke UI me dikhao
         log_buf = io.StringIO()
-        with st.spinner("Guru soch raha hai..."):
-            try:
-                with contextlib.redirect_stdout(log_buf):
-                    reply = agent.run_agent_turn(user_input)
-            except Exception as e:
-                reply = f"Error aaya — {type(e).__name__}: {e}"
+        # Placeholder pehle "thinking..." dikhayega, fir streaming text se replace ho jaayega
+        placeholder = st.empty()
+        placeholder.markdown("_Guru soch raha hai..._")
+
+        buffer = ""
+        try:
+            with contextlib.redirect_stdout(log_buf):
+                for chunk in agent.run_agent_turn_stream(pending):
+                    buffer += chunk
+                    placeholder.markdown(buffer)
+            reply = buffer if buffer else "_(no response)_"
+        except Exception as e:
+            reply = f"Error aaya — {type(e).__name__}: {e}"
+            placeholder.error(reply)
 
         tool_log = log_buf.getvalue().strip()
         if tool_log:
             with st.expander("Tool calls", expanded=False):
                 st.code(tool_log, language="text")
-        st.markdown(reply)
 
     st.session_state.messages.append(
         {"role": "assistant", "content": reply, "tools": tool_log or None}
     )
+
+    # Processing complete — flag clear, input wapas enable
+    st.session_state.processing = False
+    del st.session_state.pending_input
+    st.rerun()

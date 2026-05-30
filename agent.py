@@ -247,6 +247,19 @@ def fresh_messages():
 messages = fresh_messages()
 
 
+# Anthropic SDK ke content blocks ko clean dicts me convert karo.
+# model_dump() SDK-internal fields (parsed_output, cache_control, etc.) dalta hai
+# jo Anthropic API request me reject ho jaate hain.
+def _serialize_blocks(blocks):
+    out = []
+    for b in blocks:
+        if b.type == "text":
+            out.append({"type": "text", "text": b.text})
+        elif b.type == "tool_use":
+            out.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
+    return out
+
+
 # ============================================================
 # AGENT TURN — provider ke hisaab se dispatch
 # ============================================================
@@ -320,9 +333,9 @@ def _run_anthropic(user_input: str, max_iterations: int) -> str:
             tools=TOOLS_SCHEMA_ANTHROPIC,
         )
 
-        # Assistant turn ko history mein store karo (content blocks as dicts)
-        assistant_blocks = [block.model_dump() for block in response.content]
-        messages.append({"role": "assistant", "content": assistant_blocks})
+        # Assistant turn ko history me store karo. model_dump() SDK-internal fields bhi dalta hai
+        # (jaise parsed_output) jo Anthropic API reject karta hai — isliye manually serialize karo.
+        messages.append({"role": "assistant", "content": _serialize_blocks(response.content)})
 
         # Agar tool use nahi hua → final answer ready
         if response.stop_reason != "tool_use":
@@ -356,6 +369,138 @@ def _run_anthropic(user_input: str, max_iterations: int) -> str:
     fallback = "Sorry bhai, mujhe is question mein confusion ho gayi. Phir se try karo."
     messages.append({"role": "assistant", "content": fallback})
     return fallback
+
+
+# ============================================================
+# STREAMING — text chunks yield karta hai jaise jaise LLM generate kare
+# UI ke liye useful (ChatGPT jaisa typing effect)
+# ============================================================
+
+def run_agent_turn_stream(user_input: str, max_iterations: int = 5):
+    """Generator: text chunks yield karta hai. Tool calls beech me silently execute hote hain."""
+    if PROVIDER == "groq":
+        yield from _stream_groq(user_input, max_iterations)
+    else:
+        yield from _stream_anthropic(user_input, max_iterations)
+
+
+def _stream_anthropic(user_input: str, max_iterations: int):
+    messages.append({"role": "user", "content": user_input})
+
+    for _ in range(max_iterations):
+        # `client.messages.stream(...)` ek context manager hai jo SSE stream handle karta hai
+        with client.messages.stream(
+            model=MODEL,
+            max_tokens=1024,
+            system=SYSTEM_INSTRUCTION,
+            messages=messages,
+            tools=TOOLS_SCHEMA_ANTHROPIC,
+        ) as stream:
+            for text_chunk in stream.text_stream:
+                yield text_chunk
+            final = stream.get_final_message()
+
+        # Assistant turn ko history me store karo (clean serialization, neeche helper dekho)
+        messages.append({"role": "assistant", "content": _serialize_blocks(final.content)})
+
+        if final.stop_reason != "tool_use":
+            return  # final answer mil gaya, generator khatam
+
+        # Tools execute karo, results wapas Anthropic ko do
+        tool_results = []
+        for block in final.content:
+            if block.type == "tool_use":
+                fn = TOOL_FUNCTIONS.get(block.name)
+                try:
+                    result = fn(**block.input) if fn else f"Error: tool '{block.name}' nahi mila"
+                except Exception as e:
+                    result = f"Tool error: {e}"
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": str(result),
+                    }
+                )
+        messages.append({"role": "user", "content": tool_results})
+        # Loop continue — next stream me final answer aayega
+
+
+def _stream_groq(user_input: str, max_iterations: int):
+    messages.append({"role": "user", "content": user_input})
+
+    for _ in range(max_iterations):
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            tools=TOOLS_SCHEMA_GROQ,
+            stream=True,
+        )
+
+        content_buf = ""
+        # Groq streaming me tool calls piece-by-piece aate hain — accumulate karo
+        # Format: {index: {"id": ..., "name": ..., "arguments": ""}}
+        tool_calls_accum = {}
+
+        for chunk in response:
+            delta = chunk.choices[0].delta
+
+            if delta.content:
+                content_buf += delta.content
+                yield delta.content
+
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_accum:
+                        tool_calls_accum[idx] = {"id": None, "name": "", "arguments": ""}
+                    if tc_delta.id:
+                        tool_calls_accum[idx]["id"] = tc_delta.id
+                    if tc_delta.function and tc_delta.function.name:
+                        tool_calls_accum[idx]["name"] += tc_delta.function.name
+                    if tc_delta.function and tc_delta.function.arguments:
+                        tool_calls_accum[idx]["arguments"] += tc_delta.function.arguments
+
+        # Stream end — agar tools call nahi hue to ye final answer hai
+        if not tool_calls_accum:
+            messages.append({"role": "assistant", "content": content_buf})
+            return
+
+        # Tools call hue — assistant message + tool results store karo, fir loop
+        tool_calls_list = [
+            {
+                "id": tool_calls_accum[i]["id"],
+                "type": "function",
+                "function": {
+                    "name": tool_calls_accum[i]["name"],
+                    "arguments": tool_calls_accum[i]["arguments"],
+                },
+            }
+            for i in sorted(tool_calls_accum.keys())
+        ]
+        messages.append(
+            {
+                "role": "assistant",
+                "content": content_buf or None,
+                "tool_calls": tool_calls_list,
+            }
+        )
+
+        for tc in tool_calls_list:
+            fn_name = tc["function"]["name"]
+            fn_args = json.loads(tc["function"]["arguments"] or "{}")
+            fn = TOOL_FUNCTIONS.get(fn_name)
+            try:
+                result = fn(**fn_args) if fn else f"Error: tool '{fn_name}' nahi mila"
+            except Exception as e:
+                result = f"Tool error: {e}"
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": str(result),
+                }
+            )
 
 
 # ============================================================
